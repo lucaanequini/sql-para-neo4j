@@ -11,6 +11,9 @@ from pymongo import MongoClient
 # Carregar variáveis de ambiente
 load_dotenv()
 
+#import das queries
+from queries import buscar_historico_aluno, disciplinas_professor
+
 # Configuração das conexões com os bancos
 postgres = psycopg2.connect(os.getenv('SQL_URL'))
 mongo = MongoClient(os.getenv('MONGODB_URL'))
@@ -93,3 +96,6 @@ if __name__ == '__main__':
 
     if not os.path.exists('./resultados'):
         os.makedirs('./resultados')
+
+    buscar_historico_aluno()
+    disciplinas_professor()
