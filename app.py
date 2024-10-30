@@ -12,7 +12,7 @@ from pymongo import MongoClient
 load_dotenv()
 
 #import das queries
-from queries import buscar_historico_aluno, disciplinas_professor
+from queries import buscar_historico_aluno, disciplinas_professor, alunos_formados, chefes_departamento, grupo_de_tcc
 
 # Configuração das conexões com os bancos
 postgres = psycopg2.connect(os.getenv('SQL_URL'))
@@ -99,3 +99,6 @@ if __name__ == '__main__':
 
     buscar_historico_aluno()
     disciplinas_professor()
+    alunos_formados()
+    chefes_departamento()
+    grupo_de_tcc()

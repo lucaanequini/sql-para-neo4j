@@ -2,8 +2,8 @@
 
 ## Integrantes:
 
-- Luca Anequini Antoniazzi -> R.A:
-- Gustavo das Flores Lima -> R.A:
+- Luca Anequini Antoniazzi -> R.A: 22.224.031-9
+- Gustavo das Flores Lima -> R.A: 22.221.041-1
 
 ### Instalação
 
@@ -26,8 +26,8 @@ Ative o virtualenv em sua pasta da aplicação.
 Configure suas variav~eos de ambiente em um arquivo `.env` na raiz do projeto:
 
 ```
-POSTGRES_URL=""
-MONGO_URL=""
+SQL_URL=""
+MONGODB_URL=""
 ```
 
 ### Execução
@@ -38,7 +38,7 @@ Para executar a aplicação:
 python app.py
 ```
 
-Ao decorrer da execução, a aplicação irá criar as collections e inserir os dados no MongoDB. Você pode verificar os resultados na pasta `./saidas` que será´criada automaticamente na raiz de seu projeto ao encerrar a execução.
+Ao decorrer da execução, a aplicação irá criar as collections e inserir os dados no MongoDB. Você pode verificar os resultados na pasta `./resultados` que será´criada automaticamente na raiz de seu projeto ao encerrar a execução.
 
 1. Historíco acadêmico de um aluno, com todas as disciplinas cursadas, notas.
 2. Histórico de disciplinas ministradas por um professor específico.
