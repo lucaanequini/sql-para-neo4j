@@ -3,24 +3,25 @@ import os
 from typing import Any
 from decimal import Decimal
 
-# Bibliotecas de terceiros
+# Bibliotecas
 import psycopg2
 from dotenv import load_dotenv
 from pymongo import MongoClient
+import pandas as pd
 
 # Carregar variáveis de ambiente
 load_dotenv()
 
-#import das queries
+# Importação das queries
 from queries import buscar_historico_aluno, disciplinas_professor, alunos_formados, chefes_departamento, grupo_de_tcc
 
 # Configuração das conexões com os bancos
 postgres = psycopg2.connect(os.getenv('SQL_URL'))
 mongo = MongoClient(os.getenv('MONGODB_URL'))
-banco_mongo = mongo.banco_projeto
+banco_mongo = mongo.sqlparadocs
 
+# Retorna um lista com o nome de todas as tabelas disponíveis no PostgreSQL
 def listar_tabelas() -> list[str]:
-    """Retorna uma lista com os nomes das tabelas do PostgreSQL."""
     print("Listando tabelas disponíveis no PostgreSQL...")
     with postgres.cursor() as db_context:
         db_context.execute("SHOW TABLES;")
@@ -28,8 +29,8 @@ def listar_tabelas() -> list[str]:
         postgres.commit()
         return [tabela[1] for tabela in resultado]
 
+# Busca todos os registros de uma tabela especificada
 def buscar_todos_registros(nome_tabela: str):
-    """Busca todos os registros da tabela informada."""
     print(f"Buscando todos os registros de '{nome_tabela}'...")
     with postgres.cursor() as db_context:
         db_context.execute(f'SELECT * FROM "{nome_tabela}";')
@@ -37,8 +38,8 @@ def buscar_todos_registros(nome_tabela: str):
         postgres.commit()
         return registros
 
+# Obtem o nome de todas as colunas de uma tabela especificada
 def obter_colunas(nome_tabela: str):
-    """Obtém os nomes das colunas para uma tabela especificada."""
     print(f"Obtendo colunas da tabela '{nome_tabela}'...")
     with postgres.cursor() as db_context:
         db_context.execute(f"SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='{nome_tabela}';")
@@ -47,36 +48,27 @@ def obter_colunas(nome_tabela: str):
         return [table[3] for table in resposta]
 
 def migrar_dados():
-    """Transfere dados de tabelas do PostgreSQL para o MongoDB."""
     tabelas = listar_tabelas()
 
     for tabela in tabelas:
         colunas = obter_colunas(tabela)
         registros = buscar_todos_registros(tabela)
-        documentos = []
 
-        for registro in registros:
-            dados_formatados = []
-            for valor in registro:
-                if isinstance(valor, Decimal):
-                    dados_formatados.append(float(valor))
-                else:
-                    dados_formatados.append(valor)
-            documentos.append(dict(zip(colunas, dados_formatados)))
+        # Criar um DataFrame para facilitar a conversão
+        df = pd.DataFrame(registros, columns=colunas)
 
-        try:
-            print(f"Criando coleção '{tabela}' no MongoDB...")
-            banco_mongo.create_collection(tabela)
-        except:
-            print(f"A coleção '{tabela}' já existe no MongoDB.")
-        
-        print(f"Inserindo registros na coleção '{tabela}'...")
-        banco_mongo[tabela].insert_many(documentos)
+        # Converter Decimals automaticamente para floats
+        # Verifique e converta apenas as colunas necessárias
+        for coluna in df.select_dtypes(include=['object']):  # 'object' cobre Decimal
+            df[coluna] = df[coluna].map(lambda x: float(x) if isinstance(x, Decimal) else x)
+
+        # Inserir no MongoDB
+        banco_mongo[tabela].insert_many(df.to_dict('records'))
 
     print("Migração de dados concluída com sucesso!")
 
+# Limpa todas as coleções do MongoDB
 def limpar_colecoes():
-    """Remove todas as coleções existentes no MongoDB."""
     colecoes = banco_mongo.list_collection_names()
     if colecoes:
         print("Removendo todas as coleções do MongoDB...")
@@ -87,9 +79,7 @@ def limpar_colecoes():
         print("Nenhuma coleção encontrada para remover.")
 
 if __name__ == '__main__':
-    # Limpeza de coleções antigas no MongoDB
     limpar_colecoes()
-    # Migração dos dados
     migrar_dados()
 
     print("Saídas estarão disponíveis na pasta './resultados'.")

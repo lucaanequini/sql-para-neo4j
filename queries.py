@@ -2,7 +2,7 @@
 import os
 import json
 
-# Bibliotecas de terceiros
+# Bibliotecas
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
@@ -10,7 +10,7 @@ from pymongo import MongoClient
 load_dotenv()
 
 conexao_mongo = MongoClient(os.environ['MONGODB_URL'])
-banco_mongo = conexao_mongo.projeto_db
+banco_mongo = conexao_mongo.sqlparadocs
 
 # Função para buscar o histórico acadêmico do aluno com RA fornecido
 def buscar_historico_aluno():
@@ -110,7 +110,7 @@ def grupo_de_tcc():
     print("Alunos participantes do grupo CC1234567")
 
     pipeline = [
-        {"$match": {"group_id": "CC1234567"}},
+        {"$match": {"group_id": "EP1111111"}},
         {"$lookup": {
             "from": "tcc_group",
             "localField": "group_id",
@@ -122,9 +122,9 @@ def grupo_de_tcc():
             "from": "professor", 
             "localField": "tcc_grupo.professor_id", 
             "foreignField": "id",  
-            "as": "detalhes_professor" 
+            "as": "detalhes_professor"
         }},
-        {"$unwind": "$detalhes_professor"},
+        {"$unwind": {"path": "$detalhes_professor", "preserveNullAndEmptyArrays": True}},  # Não quebra se não houver correspondência
         {"$project": {  
             "id": 1,
             "name": 1,
@@ -136,17 +136,27 @@ def grupo_de_tcc():
 
     resultado = list(banco_mongo["student"].aggregate(pipeline))
 
+    if not resultado:
+        print("Nenhum resultado encontrado para o grupo de TCC.")
+        return
+
     registros = {
-        "group_id": resultado[0]["group_id"],
-        "detalhes_professor": resultado[0]["detalhes_professor"], 
+        "group_id": resultado[0].get("group_id", "Desconhecido"),
+        "detalhes_professor": resultado[0].get("nome_professor", "Não informado"),
         "alunos": []
     }
 
-    for i, linha in enumerate(resultado):
-        resultado[i]["_id"] = str(linha["_id"])
-        resultado[i].pop("group_id")
-        resultado[i].pop("nome_professor")
-        registros["alunos"].append(resultado[i])
+    for linha in resultado:
+        aluno = {
+            "id": linha.get("id"),
+            "name": linha.get("name"),
+            "course_id": linha.get("course_id"),
+        }
+        registros["alunos"].append(aluno)
 
-    with open('./saidas/grupo-tcc.json', 'w') as f:
+    # Salvar em arquivo JSON
+    os.makedirs('./resultados', exist_ok=True)
+    with open('./resultados/grupo-tcc.json', 'w') as f:
         json.dump(registros, f, ensure_ascii=False)
+
+    print("Dados do grupo de TCC salvos em './resultados/grupo-tcc.json'.")
