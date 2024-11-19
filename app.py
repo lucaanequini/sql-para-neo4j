@@ -6,8 +6,7 @@ from decimal import Decimal
 # Bibliotecas
 import psycopg2
 from dotenv import load_dotenv
-from pymongo import MongoClient
-import pandas as pd
+from neo4j import GraphDatabase
 
 # Carregar variáveis de ambiente
 load_dotenv()
@@ -17,19 +16,23 @@ from queries import buscar_historico_aluno, disciplinas_professor, alunos_formad
 
 # Configuração das conexões com os bancos
 postgres = psycopg2.connect(os.getenv('SQL_URL'))
-mongo = MongoClient(os.getenv('MONGODB_URL'))
-banco_mongo = mongo.sqlparadocs
+neo4j = GraphDatabase.driver(os.getenv('NEO4J_URI'), auth=(os.getenv('NEO4J_USERNAME'), os.getenv('NEO4J_PASSWORD')))
 
-# Retorna um lista com o nome de todas as tabelas disponíveis no PostgreSQL
+# Funções auxiliares (mantidas iguais)
 def listar_tabelas() -> list[str]:
     print("Listando tabelas disponíveis no PostgreSQL...")
     with postgres.cursor() as db_context:
-        db_context.execute("SHOW TABLES;")
+        db_context.execute("""
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public' 
+            AND table_type = 'BASE TABLE';
+        """)
         resultado = db_context.fetchall()
         postgres.commit()
-        return [tabela[1] for tabela in resultado]
+        return [tabela[0] for tabela in resultado]
 
-# Busca todos os registros de uma tabela especificada
+
 def buscar_todos_registros(nome_tabela: str):
     print(f"Buscando todos os registros de '{nome_tabela}'...")
     with postgres.cursor() as db_context:
@@ -38,57 +41,97 @@ def buscar_todos_registros(nome_tabela: str):
         postgres.commit()
         return registros
 
-# Obtem o nome de todas as colunas de uma tabela especificada
 def obter_colunas(nome_tabela: str):
     print(f"Obtendo colunas da tabela '{nome_tabela}'...")
     with postgres.cursor() as db_context:
-        db_context.execute(f"SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='{nome_tabela}';")
+        db_context.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{nome_tabela}';")
         resposta = db_context.fetchall()
         postgres.commit()
-        return [table[3] for table in resposta]
+        return [coluna[0] for coluna in resposta]
 
 def migrar_dados():
     tabelas = listar_tabelas()
+    tabelas_terceiras = ['takes', 'tcc_group', 'teaches', 'req', 'graduate']
+    with neo4j.session() as session:
+        for tabela in tabelas:
+            colunas = obter_colunas(tabela)
+            registros = buscar_todos_registros(tabela)
+            if tabela not in tabelas_terceiras:
+                for registro in registros:
+                    propriedades_node = {
+                        k: float(v) if isinstance(v, Decimal) else v
+                        for k, v in zip(colunas, registro)
+                    }
+                    query = f"CREATE (n:{tabela.capitalize()} {{{', '.join([f'{k}: ${k}' for k in propriedades_node])}}})"
+                    session.run(query, **propriedades_node)
+            else:
+                for registro in registros:
+                        propriedades_node = {colunas[i]: (float(value) if isinstance(value, Decimal) else value) for i, value in enumerate(registro)}
+                        if tabela == 'takes':
+                            data = {k: v for k, v in propriedades_node.items() if k not in ['student_id', 'subj_id']}
+                            query = f"""
+                            MATCH (student:Student {{id: $student_id}}), (subj:Subj {{id: $subj_id}})
+                            CREATE (student)-[:relacao_estudante {{ {', '.join([f'{k}: ${k}' for k in data])} }}]->(subj)
+                            """
+                            session.run(query, **{**{'student_id': registro[colunas.index('student_id')], 'subj_id': registro[colunas.index('subj_id')]}, **data})
+                        elif tabela == 'teaches':
+                            data = {k: v for k, v in propriedades_node.items() if k not in ['subj_id', 'professor_id']}
+                            query = f"""
+                            MATCH (professor:Professor {{id: $professor_id}}), (subj:Subj {{id: $subj_id}})
+                            CREATE (professor)-[:ensina {{ {', '.join([f'{k}: ${k}' for k in data])} }}]->(subj)
+                            """
+                            session.run(query, **{**{'subj_id': registro[colunas.index('subj_id')], 'professor_id': registro[colunas.index('professor_id')]}, **data})
+                        elif tabela == 'req':
+                            data = {k: v for k, v in propriedades_node.items() if k not in ['subj_id', 'course_id']}
+                            query = f"""
+                            MATCH (subj:Subj {{id: $subj_id}}), (course:Course {{id: $course_id}})
+                            CREATE (subj)-[:requisito {{ {', '.join([f'{k}: ${k}' for k in data])} }}]->(course)
+                            """
+                            session.run(query, **{**{'subj_id': registro[colunas.index('subj_id')], 'course_id': registro[colunas.index('course_id')]}, **data})
+                        elif tabela == 'graduate':
+                            data = {k: v for k, v in propriedades_node.items() if k not in ['student_id', 'course_id']}
+                            query = f"""
+                            MATCH (student:Student {{id: $student_id}}), (course:Course {{id: $course_id}})
+                            CREATE (student)-[:graduado {{ {', '.join([f'{k}: ${k}' for k in data])} }}]->(course)
+                            """
+                            session.run(query, **{**{'student_id': registro[colunas.index('student_id')], 'course_id': registro[colunas.index('course_id')]}, **data}) 
+                        elif tabela == 'tcc_group':
+                            data = {k: v for k, v in propriedades_node.items() if k not in ['group_id']}
+                            query = f"""
+                            MATCH (student:Student {{group_id: $group_id}}), (prof:Professor {{id: $professor_id}})
+                            CREATE (student)-[:mentoria_por {{ {', '.join([f'{k}: ${k}' for k in data])} }}]->(prof)
+                            """
+                            session.run(query, **{**{'group_id': registro[colunas.index('id')], 'professor_id': registro[colunas.index('professor_id')]}, **data})
 
-    for tabela in tabelas:
-        colunas = obter_colunas(tabela)
-        registros = buscar_todos_registros(tabela)
+        colunas_dpt = obter_colunas('department')
+        registros_dpt = buscar_todos_registros('department')
 
-        # Criar um DataFrame para facilitar a conversão
-        df = pd.DataFrame(registros, columns=colunas)
+        for registro in registros_dpt:
+            node_data = {colunas_dpt[i]: (float(value) if isinstance(value, Decimal) else value) for i, value in enumerate(registro)}
+            query = f"""
+            MATCH (p:Professor {{id: $boss_id}}), (d:Department {{dept_name: $dept_name}}) 
+            CREATE (p)-[:chefes]->(d)"""
+            session.run(query, **{**{'boss_id': registro[colunas_dpt.index('boss_id')], 'dept_name': registro[colunas_dpt.index('dept_name')]}})
 
-        # Converter Decimals automaticamente para floats
-        # Verifique e converta apenas as colunas necessárias
-        for coluna in df.select_dtypes(include=['object']):  # 'object' cobre Decimal
-            df[coluna] = df[coluna].map(lambda x: float(x) if isinstance(x, Decimal) else x)
+    print("Migração de dados (com relacionamentos) concluída com sucesso!")
 
-        # Inserir no MongoDB
-        banco_mongo[tabela].insert_many(df.to_dict('records'))
-
-    print("Migração de dados concluída com sucesso!")
-
-# Limpa todas as coleções do MongoDB
-def limpar_colecoes():
-    colecoes = banco_mongo.list_collection_names()
-    if colecoes:
-        print("Removendo todas as coleções do MongoDB...")
-        for colecao in colecoes:
-            banco_mongo[colecao].drop()
-            print(f"Coleção '{colecao}' removida.")
-    else:
-        print("Nenhuma coleção encontrada para remover.")
+# Limpar o banco Neo4j (cuidado: apaga todos os dados!)
+def limpar_neo4j():
+    with neo4j.session() as session:
+        session.run("MATCH (n) DETACH DELETE n")
+        print("Limpeza concluída.")
 
 if __name__ == '__main__':
-    limpar_colecoes()
+    limpar_neo4j()
     migrar_dados()
 
-    print("Saídas estarão disponíveis na pasta './resultados'.")
+    print("Consultas no Neo4j:")
 
-    if not os.path.exists('./resultados'):
-        os.makedirs('./resultados')
+    if not os.path.exists('./resultados_neo4j'):
+        os.makedirs('./resultados_neo4j')
 
     buscar_historico_aluno()
     disciplinas_professor()
-    alunos_formados()
+    alunos_formados ()
     chefes_departamento()
     grupo_de_tcc()
